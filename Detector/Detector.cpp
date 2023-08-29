@@ -22,6 +22,7 @@ void Banner() {
                                           |___/                        
                                   
                                     [Coded by MrEmpy]
+                                         [v2.0]
 
 )EOF");
 }
@@ -34,6 +35,8 @@ void Help(char* progname) {
 }
 
 int main(int argc, char* argv[]) {
+    bool hasHook = false;
+
     HMODULE ntdll = LoadLibraryA("ntdll.dll");
     if (ntdll == NULL) {
         printf("[-] Error loading ntdll.dll\n");
@@ -50,8 +53,6 @@ int main(int argc, char* argv[]) {
     PIMAGE_NT_HEADERS nt_headers = (PIMAGE_NT_HEADERS)((char*)dos_header + dos_header->e_lfanew);
     PIMAGE_EXPORT_DIRECTORY exports = (PIMAGE_EXPORT_DIRECTORY)((char*)ntdll + nt_headers->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress);
 
-    DWORD* function_addresses = (DWORD*)((char*)ntdll + exports->AddressOfFunctions);
-    WORD* function_ordinals = (WORD*)((char*)ntdll + exports->AddressOfNameOrdinals);
     DWORD* function_names = (DWORD*)((char*)ntdll + exports->AddressOfNames);
 
     int outputfname = strlen(argv[1]) + 1;
@@ -65,25 +66,46 @@ int main(int argc, char* argv[]) {
     puts("[*] NT API being hooked:");
     puts("=========================================================================================");
     for (int i = 0; i < exports->NumberOfFunctions; i++) {
-        //printf("%s\n", (char*)ntdll + function_names[i]);
-        if (strncmp((char*)ntdll + function_names[i], "Nt", 2) == 0) {
-            FARPROC procaddr = GetProcAddress(ntdll, (LPCSTR)(char*)ntdll + function_names[i]);
-            if (procaddr == NULL) {
-                printf("[-] Error finding function %s\n", (char*)ntdll + function_names[i]);
-                return 1;
-            }
-            LPBYTE lpprocaddr = (LPBYTE)procaddr;
-            DWORD dwprocaddr = *(DWORD*)lpprocaddr;
+        char* ntFunction = (char*)ntdll + function_names[i];
+        //printf("%s\n", ntFunction);
+        if (strncmp(ntFunction, "Nt", 2) == 0) {
+            if (strncmp(ntFunction, "NtdllDialogWndProc", 18) != 0 && strncmp(ntFunction, "NtdllDefWindowProc", 18) != 0) {       // blacklist nt funcs
+                FARPROC procaddr = GetProcAddress(ntdll, (LPCSTR)ntFunction);
+                if (procaddr == NULL) {
+                    printf("[-] Error finding function %s\n", ntFunction);
+                    return 1;
+                }
+                LPBYTE lpprocaddr = (LPBYTE)procaddr;
+                DWORD dwprocaddr = *(DWORD*)lpprocaddr;
+                char realbytes[] = "0xB8D18B4C";
+                DWORD Written;
 
-            char realbytes[] = "0xB8D18B4C";
-            DWORD Written;
-            if (DetectHook(procaddr) == false) {
-                printf("[-] %s [%s != 0x%02X]\n", (char*)ntdll + function_names[i], realbytes, dwprocaddr);
-                WriteFile(outputf, (char*)ntdll + function_names[i], strlen((char*)ntdll + function_names[i]), &Written, NULL);
-                WriteFile(outputf, breakline, strlen(breakline), &Written, NULL);
+                if (strncmp(ntFunction, "NtQuerySystemTime", 17) == 0 && memcmp("\xE9\x4B", procaddr, 2) != 0) {
+                    hasHook = true;
+                    printf("[-] %s [%s != 0x%02X]\n", ntFunction, "0x****4BE9", dwprocaddr);
+                    WriteFile(outputf, ntFunction, strlen(ntFunction), &Written, NULL);
+                    WriteFile(outputf, breakline, strlen(breakline), &Written, NULL);
+                }
+                else if (strncmp(ntFunction, "NtGetTickCount", 14) == 0 && memcmp("\xB9\x20", procaddr, 2) != 0) {
+                    hasHook = true;
+                    printf("[-] %s [%s != 0x%02X]\n", ntFunction, "0x****20B9", dwprocaddr);
+                    WriteFile(outputf, ntFunction, strlen(ntFunction), &Written, NULL);
+                    WriteFile(outputf, breakline, strlen(breakline), &Written, NULL);
+                }
+                else if (strncmp(ntFunction, "NtQuerySystemTime", 17) != 0 && strncmp(ntFunction, "NtGetTickCount", 14) != 0 && !DetectHook(procaddr)) {
+                    hasHook = true;
+                    printf("[-] %s [%s != 0x%02X]\n", ntFunction, realbytes, dwprocaddr);
+                    WriteFile(outputf, ntFunction, strlen(ntFunction), &Written, NULL);
+                    WriteFile(outputf, breakline, strlen(breakline), &Written, NULL);
+                }
             }
         }
     }
+
+    if (!hasHook) {
+        puts("[+] You are safe, there is no hook in the NT API");
+    }
+
     puts("=========================================================================================");
 
     CloseHandle(outputf);
